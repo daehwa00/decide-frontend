@@ -5,9 +5,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 interface CompilationProcessProps {
   onComplete: () => void;
+  logs?: AgentLog[];
 }
 
-type AgentLog = {
+export type AgentLog = {
   id: string;
   agent: string;
   role: 'security' | 'legal' | 'product' | 'system';
@@ -15,8 +16,8 @@ type AgentLog = {
   type: 'check' | 'warning' | 'consensus' | 'action';
 };
 
-export function CompilationProcess({ onComplete }: CompilationProcessProps) {
-  const [logs, setLogs] = useState<AgentLog[]>([]);
+export function CompilationProcess({ onComplete, logs: externalLogs }: CompilationProcessProps) {
+  const [logs, setLogs] = useState<AgentLog[]>(externalLogs ?? []);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const script: Omit<AgentLog, 'id'>[] = [
@@ -35,6 +36,11 @@ export function CompilationProcess({ onComplete }: CompilationProcessProps) {
   ];
 
   useEffect(() => {
+    if (externalLogs) {
+      setLogs(externalLogs);
+      return;
+    }
+
     let currentIndex = 0;
     const interval = setInterval(() => {
       if (currentIndex >= script.length) {
@@ -42,18 +48,24 @@ export function CompilationProcess({ onComplete }: CompilationProcessProps) {
         setTimeout(onComplete, 1500);
         return;
       }
-      
+
       const nextLog = script[currentIndex];
       setLogs(prev => [...prev, { ...nextLog, id: Math.random().toString() }]);
       currentIndex++;
-      
+
       if (scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
       }
     }, 800);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [externalLogs, onComplete]);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [logs]);
 
   const getIcon = (role: string) => {
     switch (role) {

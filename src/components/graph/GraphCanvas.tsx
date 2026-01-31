@@ -1,18 +1,21 @@
 import { useRef, useEffect, useMemo, useState } from 'react';
 import ForceGraph2D, { ForceGraphMethods } from 'react-force-graph-2d';
 
-import { Candidate, Person } from '@/types';
-import { MOCK_PEOPLE, MOCK_EDGES } from '@/services/mockData';
+import type { ApiGraphEdge, ApiGraphNode, RoutingCandidate } from '@/types/api';
 
 interface GraphCanvasProps {
-  selectedCandidates: Candidate[];
+  nodes: ApiGraphNode[];
+  edges: ApiGraphEdge[];
+  selectedCandidates: RoutingCandidate[];
+  loading?: boolean;
+  error?: string;
 }
 
-export function GraphCanvas({ selectedCandidates }: GraphCanvasProps) {
+export function GraphCanvas({ nodes, edges, selectedCandidates, loading, error }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods>();
   const [dimensions, setDimensions] = useState({ w: 800, h: 600 });
-  const [activeNode, setActiveNode] = useState<Person | null>(null);
+  const [activeNode, setActiveNode] = useState<ApiGraphNode | null>(null);
   const hoveredIdRef = useRef<string | null>(null);
   const rafRef = useRef<number | null>(null);
   const zoomedRef = useRef<string>('');
@@ -28,7 +31,7 @@ export function GraphCanvas({ selectedCandidates }: GraphCanvasProps) {
 
   useEffect(() => {
     const animate = () => {
-      // graphRef.current?.refresh();
+      (graphRef.current as any)?.refresh?.();
       rafRef.current = window.requestAnimationFrame(animate);
     };
     rafRef.current = window.requestAnimationFrame(animate);
@@ -60,7 +63,7 @@ export function GraphCanvas({ selectedCandidates }: GraphCanvasProps) {
 
   const adjacency = useMemo(() => {
     const map = new Map<string, Set<string>>();
-    MOCK_EDGES.forEach(edge => {
+    edges.forEach(edge => {
       if (!map.has(edge.source)) {
         map.set(edge.source, new Set());
       }
@@ -71,24 +74,28 @@ export function GraphCanvas({ selectedCandidates }: GraphCanvasProps) {
       map.get(edge.target)?.add(edge.source);
     });
     return map;
-  }, []);
+  }, [edges]);
 
-  const nodes = useMemo(() => {
-    return MOCK_PEOPLE.map(p => ({
-      group: p.org_path.split('/')[1], // Dept color
-      val: selectedIds.has(p.id) ? 20 : 5, // Size
-      color: selectedIds.has(p.id) ? '#ffffff' : undefined,
-      ...p
-    }));
-  }, [selectedIds]);
+  const graphNodes = useMemo(() => {
+    return nodes.map(node => {
+      const department = typeof node.properties?.department === 'string' ? node.properties.department : undefined;
+      const group = department ?? node.type ?? 'node';
+      return {
+        ...node,
+        group,
+        val: selectedIds.has(node.id) ? 24 : 6,
+        color: selectedIds.has(node.id) ? '#ffffff' : undefined
+      };
+    });
+  }, [nodes, selectedIds]);
 
   const links = useMemo(() => {
-    return MOCK_EDGES.map(e => ({
-      source: e.source,
-      target: e.target,
-      color: e.type === 'risk' ? '#ef4444' : '#3b82f6'
+    return edges.map(edge => ({
+      source: edge.source,
+      target: edge.target,
+      color: edge.type === 'risk' ? '#ef4444' : '#3b82f6'
     }));
-  }, []);
+  }, [edges]);
 
   const getNodeId = (node: any) => {
     if (typeof node === 'string') return node;
@@ -123,7 +130,7 @@ export function GraphCanvas({ selectedCandidates }: GraphCanvasProps) {
           ref={graphRef}
           width={dimensions.w}
           height={dimensions.h}
-          graphData={{ nodes, links }}
+          graphData={{ nodes: graphNodes, links }}
           nodeLabel="name"
           nodeAutoColorBy="group"
           cooldownTicks={Infinity}
@@ -133,10 +140,10 @@ export function GraphCanvas({ selectedCandidates }: GraphCanvasProps) {
           linkDirectionalParticleSpeed={() => 0.005} // Slow particles
           backgroundColor="#020617" // slate-950
           onNodeHover={node => {
-            const nextId = node ? (node as Person).id : null;
+            const nextId = node ? (node as ApiGraphNode).id : null;
             if (hoveredIdRef.current !== nextId) {
               hoveredIdRef.current = nextId;
-              // graphRef.current?.refresh();
+              (graphRef.current as any)?.refresh?.();
             }
           }}
           nodeCanvasObject={(node: any, ctx, globalScale) => {
@@ -211,7 +218,7 @@ export function GraphCanvas({ selectedCandidates }: GraphCanvasProps) {
             // Center view on node
             graphRef.current?.centerAt(node.x, node.y, 1000);
             graphRef.current?.zoom(3, 2000);
-            setActiveNode(node as Person);
+            setActiveNode(node as ApiGraphNode);
           }}
           onBackgroundClick={() => setActiveNode(null)}
           linkColor={link => {
@@ -227,14 +234,34 @@ export function GraphCanvas({ selectedCandidates }: GraphCanvasProps) {
           }}
         />
         <div className="absolute top-4 left-4 bg-black/50 p-2 rounded text-xs text-white">
-           그래프 모드: 클러스터 뷰 (1200 노드) · 노드에 마우스를 올려보세요
+           그래프 모드: 클러스터 뷰 · 노드에 마우스를 올려보세요
         </div>
-        {activeNode && (
-          <div className="absolute bottom-4 left-4 max-w-xs rounded-lg border border-white/10 bg-slate-900/90 p-3 text-white shadow-lg">
+      {loading && graphNodes.length > 0 && (
+        <div className="absolute top-4 right-4 rounded-full bg-slate-900/70 p-2 text-slate-200 shadow">
+          <div className="h-6 w-6 rounded-full border-[3px] border-slate-400/40 border-t-sky-400 animate-spin" />
+        </div>
+      )}
+      {graphNodes.length === 0 && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-xs text-slate-300 space-y-2">
+          {loading && (
+            <div className="h-10 w-10 rounded-full border-[3px] border-slate-400/40 border-t-sky-400 animate-spin" />
+          )}
+          <div>{loading ? '그래프 데이터를 불러오는 중...' : '그래프 데이터가 없습니다.'}</div>
+          {error && (
+            <div className="max-w-xs text-[10px] text-red-300 text-center break-words">
+              {error}
+            </div>
+          )}
+        </div>
+      )}
+      {activeNode && (
+        <div className="absolute bottom-4 left-4 max-w-xs rounded-lg border border-white/10 bg-slate-900/90 p-3 text-white shadow-lg">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">{activeNode.name}</p>
-                <p className="text-xs text-slate-300">{activeNode.role} · {activeNode.org_path}</p>
+                <p className="text-xs text-slate-300">
+                  {activeNode.type ?? 'Node'} · {typeof activeNode.properties?.department === 'string' ? activeNode.properties.department : '조직'}
+                </p>
               </div>
               <button
                 type="button"
@@ -247,6 +274,11 @@ export function GraphCanvas({ selectedCandidates }: GraphCanvasProps) {
             {selectedById.get(activeNode.id)?.reason && (
               <p className="mt-2 text-xs text-slate-200">
                 근거: {selectedById.get(activeNode.id)?.reason}
+              </p>
+            )}
+            {selectedById.get(activeNode.id)?.score && (
+              <p className="mt-2 text-xs text-slate-200">
+                적합도: {selectedById.get(activeNode.id)?.score?.toFixed(2)}
               </p>
             )}
           </div>

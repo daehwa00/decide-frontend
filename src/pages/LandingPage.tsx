@@ -1,87 +1,31 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button, Card, Badge } from '@/components/ui';
 import { Activity, Shield, Scale, Star } from 'lucide-react';
+import { ApiClient } from '@/services/apiClient';
+import type { ApiIssueResponse } from '@/types/api';
 
 export default function LandingPage() {
-  const issues = [
-    {
-      id: 'ISS-2841',
-      title: '리텐션 개선을 위한 행동 데이터 수집 확대',
-      tags: ['privacy', 'data', 'customer_comms'],
-      urgency: '높음',
-      status: '라우팅 대기',
-      owner: '미지정',
-      age: '2h 14m',
-      sla: '위험',
-      decisionSet: ['Minji Kim (PM)', 'Ethan Park (Security)', 'Soojin Lee (Legal)'],
-      decisionContext: {
-        'Minji Kim (PM)': '맥락 및 비즈니스',
-        'Ethan Park (Security)': 'Risk Review',
-        'Soojin Lee (Legal)': 'Compliance'
-      },
-      collaboration: {
-        steps: { security: 'current', legal: 'current', owner: 'pending' }
-      }
-    },
-    {
-      id: 'ISS-2837',
-      title: '엔터프라이즈 신규 가격 티어 도입',
-      tags: ['pricing', 'brand', 'legal'],
-      urgency: '중간',
-      status: '검토 중',
-      owner: 'Grace Han (VP Product)',
-      age: '6h 03m',
-      sla: '정상',
-      decisionSet: ['Grace Han (Owner)', 'Jae Choi (Finance)', 'Mina Jung (Legal)'],
-      decisionContext: {
-        'Grace Han (Owner)': '최종 책임',
-        'Jae Choi (Finance)': 'Budget Impact',
-        'Mina Jung (Legal)': 'Compliance'
-      },
-      collaboration: {
-        steps: { security: 'done', legal: 'done', owner: 'current' }
-      }
-    },
-    {
-      id: 'ISS-2832',
-      title: 'EU 트래픽 신규 데이터센터 이전',
-      tags: ['infra', 'security', 'legal'],
-      urgency: '높음',
-      status: '결정 대기',
-      owner: 'Daniel Kang (Infra Dir.)',
-      age: '1d 02h',
-      sla: '위험',
-      decisionSet: ['Daniel Kang (Owner)', 'Hana Shin (Security)', 'Leo Yoon (Legal)'],
-      decisionContext: {
-        'Daniel Kang (Owner)': '최종 책임',
-        'Hana Shin (Security)': 'Risk Review',
-        'Leo Yoon (Legal)': 'Compliance'
-      },
-      collaboration: {
-        steps: { security: 'done', legal: 'current', owner: 'pending' }
-      }
-    },
-    {
-      id: 'ISS-2824',
-      title: 'Q2 성장 리퍼럴 프로그램 론칭',
-      tags: ['growth', 'brand'],
-      urgency: '낮음',
-      status: '대기열',
-      owner: 'N/A',
-      age: '2d 11h',
-      sla: '정상',
-      decisionSet: ['N/A'],
-      decisionContext: {
-        'N/A': '대기 중'
-      },
-      collaboration: {
-        steps: { security: 'pending', legal: 'pending', owner: 'pending' }
-      }
-    }
-  ];
-
-  const [selectedIssueId, setSelectedIssueId] = useState(issues[0]?.id ?? '');
+  const navigate = useNavigate();
+  const [issues, setIssues] = useState<Array<{
+    id: string;
+    title: string;
+    tags: string[];
+    urgency: '높음' | '중간' | '낮음';
+    status: string;
+    owner: string;
+    age: string;
+    sla: '위험' | '정상';
+    decisionSet: string[];
+    decisionContext: Record<string, string>;
+    collaboration: {
+      steps: { security: 'done' | 'current' | 'pending'; legal: 'done' | 'current' | 'pending'; owner: 'done' | 'current' | 'pending' };
+    };
+    runId?: string;
+  }>>([]);
+  const [selectedIssueId, setSelectedIssueId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const selectedIssue = issues.find(issue => issue.id === selectedIssueId) ?? issues[0];
   const tagLabels: Record<string, string> = {
     privacy: '프라이버시',
@@ -92,7 +36,10 @@ export default function LandingPage() {
     legal: '법무',
     infra: '인프라',
     security: '보안',
-    growth: '성장'
+    growth: '성장',
+    payments: '결제',
+    payment: '결제',
+    ux: 'UX'
   };
   const collaborationIcons = {
     security: Shield,
@@ -129,6 +76,117 @@ export default function LandingPage() {
     return '검토 완료';
   };
 
+  const issueRunMap = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('decide_issue_runs');
+      return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    } catch {
+      return {};
+    }
+  }, []);
+
+  const formatAge = (dateString: string) => {
+    const created = new Date(dateString).getTime();
+    if (Number.isNaN(created)) return '알 수 없음';
+    const diffMs = Date.now() - created;
+    const minutes = Math.max(1, Math.floor(diffMs / (1000 * 60)));
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    if (days > 0) return `${days}d ${hours % 24}h`;
+    if (hours > 0) return `${hours}h ${minutes % 60}m`;
+    return `${minutes}m`;
+  };
+
+  const mapUrgency = (value?: string | null) => {
+    if (!value) return '낮음';
+    const upper = value.toUpperCase();
+    if (upper.includes('HIGH')) return '높음';
+    if (upper.includes('MID') || upper.includes('MED')) return '중간';
+    if (upper.includes('LOW')) return '낮음';
+    return '낮음';
+  };
+
+  const mapStatusLabel = (status: string) => {
+    switch (status) {
+      case 'PENDING':
+        return '대기';
+      case 'PROCESSING':
+        return '검토 중';
+      case 'DECIDED':
+        return '결정 완료';
+      case 'EXECUTED':
+        return '실행됨';
+      case 'CANCELLED':
+        return '취소됨';
+      default:
+        return status;
+    }
+  };
+
+  const mapSteps = (status: string) => {
+    switch (status) {
+      case 'PROCESSING':
+        return { security: 'current', legal: 'pending', owner: 'pending' } as const;
+      case 'DECIDED':
+      case 'EXECUTED':
+        return { security: 'done', legal: 'done', owner: 'done' } as const;
+      case 'CANCELLED':
+        return { security: 'pending', legal: 'pending', owner: 'pending' } as const;
+      default:
+        return { security: 'pending', legal: 'pending', owner: 'pending' } as const;
+    }
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+    setLoading(true);
+    setError(null);
+
+    ApiClient.listIssues({ limit: 20 })
+      .then((data: ApiIssueResponse[]) => {
+        if (!isMounted) return;
+        const mapped = data.map(issue => {
+          const runId = issueRunMap[issue.id];
+          const placeholderDecision = runId ? '분석 대기' : '미배정';
+          return {
+            id: issue.id,
+            title: issue.title ?? issue.text ?? '제목 없음',
+            tags: issue.tags ?? [],
+            urgency: mapUrgency(issue.urgency),
+            status: mapStatusLabel(issue.status),
+            owner: issue.submitter_id ? `제출자 ${issue.submitter_id}` : '미지정',
+            age: formatAge(issue.created_at),
+            sla: formatAge(issue.created_at).includes('d') ? '위험' : '정상',
+            decisionSet: [placeholderDecision],
+            decisionContext: {
+              [placeholderDecision]: runId ? '라우팅 분석 필요' : 'Run ID 없음'
+            },
+            collaboration: {
+              steps: mapSteps(issue.status)
+            },
+            runId
+          };
+        });
+        setIssues(mapped);
+        setSelectedIssueId(prev => {
+          if (mapped.some(issue => issue.id === prev)) return prev;
+          return mapped[0]?.id ?? '';
+        });
+      })
+      .catch(err => {
+        if (!isMounted) return;
+        setError(err instanceof Error ? err.message : '이슈 목록을 불러오지 못했습니다.');
+      })
+      .finally(() => {
+        if (!isMounted) return;
+        setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [issueRunMap]);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -164,10 +222,25 @@ export default function LandingPage() {
         <div className="min-w-0 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">들어온 이슈</h2>
-            <p className="text-xs text-muted-foreground">대기 {issues.length}건</p>
+            <p className="text-xs text-muted-foreground">
+              {loading ? '불러오는 중...' : `대기 ${issues.length}건`}
+            </p>
           </div>
 
           <div className="space-y-3">
+            {error && (
+              <Card className="p-4 text-xs text-red-500 border-red-200 space-y-2">
+                <div>요청 실패: {error}</div>
+                <pre className="whitespace-pre-wrap text-[10px] text-red-400/90">
+                  {error}
+                </pre>
+              </Card>
+            )}
+            {!loading && issues.length === 0 && !error && (
+              <Card className="p-4 text-xs text-muted-foreground">
+                아직 등록된 이슈가 없습니다.
+              </Card>
+            )}
             {issues.map(issue => (
               <Card
                 key={issue.id}
@@ -257,41 +330,83 @@ export default function LandingPage() {
         <div className="space-y-3 sticky top-24 self-start">
           <h2 className="text-lg font-semibold">현재 결정</h2>
           <Card className="p-4 space-y-4 bg-slate-50/80 border-slate-200">
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground uppercase tracking-wide">{selectedIssue.id}</p>
-              <p className="text-base font-semibold">{selectedIssue.title}</p>
-              <p className="text-xs text-muted-foreground">상태: {selectedIssue.status}</p>
-            </div>
+            {selectedIssue ? (
+              <>
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">{selectedIssue.id}</p>
+                  <p className="text-base font-semibold">{selectedIssue.title}</p>
+                  <p className="text-xs text-muted-foreground">상태: {selectedIssue.status}</p>
+                </div>
 
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-muted-foreground uppercase">최소 판단 집합</p>
-              <div className="space-y-2">
-                {selectedIssue.decisionSet.map(member => (
-                  <div key={member} className="flex items-start justify-between text-sm">
-                    <div className="space-y-1">
-                      <span>{member}</span>
-                      <p className="text-[11px] text-muted-foreground">
-                        {(selectedIssue.decisionContext as any)?.[member] ?? '컨텍스트'}
-                      </p>
-                    </div>
-                    <Badge variant="secondary" className="text-[10px]">시스템 선정</Badge>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase">최소 판단 집합</p>
+                  <div className="space-y-2">
+                    {selectedIssue.decisionSet.map(member => (
+                      <div key={member} className="flex items-start justify-between text-sm">
+                        <div className="space-y-1">
+                          <span>{member}</span>
+                          <p className="text-[11px] text-muted-foreground">
+                            {(selectedIssue.decisionContext as any)?.[member] ?? '컨텍스트'}
+                          </p>
+                        </div>
+                        <Badge variant="secondary" className="text-[10px]">시스템 선정</Badge>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
 
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-muted-foreground uppercase">다음 작업</p>
-              <p className="text-[11px] text-muted-foreground">판단 집합에게 검토 요청이 전송됩니다</p>
-              <div className="flex flex-col gap-2">
-                <Link to="/analysis" state={{ showRoutingToasts: true }}>
-                  <Button size="sm" className="w-full">라우팅 시작</Button>
-                </Link>
-                <Link to="/analysis" state={{ startMode: 'decision' }}>
-                  <Button size="sm" variant="outline" className="w-full">의사결정 카드 열기</Button>
-                </Link>
-              </div>
-            </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase">다음 작업</p>
+                  <p className="text-[11px] text-muted-foreground">판단 집합에게 검토 요청이 전송됩니다</p>
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      disabled={!selectedIssue?.runId}
+                      onClick={() => {
+                        if (!selectedIssue?.runId) return;
+                        navigate('/analysis', {
+                          state: {
+                            run_id: selectedIssue.runId,
+                            issue_id: selectedIssue.id,
+                            tags: selectedIssue.tags,
+                            showRoutingToasts: true
+                          }
+                        });
+                      }}
+                    >
+                      라우팅 시작
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full"
+                      disabled={!selectedIssue?.runId}
+                      onClick={() => {
+                        if (!selectedIssue?.runId) return;
+                        navigate('/analysis', {
+                          state: {
+                            run_id: selectedIssue.runId,
+                            issue_id: selectedIssue.id,
+                            tags: selectedIssue.tags,
+                            startMode: 'decision'
+                          }
+                        });
+                      }}
+                    >
+                      의사결정 카드 열기
+                    </Button>
+                  </div>
+                  {!selectedIssue?.runId && (
+                    <p className="text-[10px] text-muted-foreground">
+                      이 이슈는 run_id가 없어 분석을 시작할 수 없습니다.
+                    </p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">선택된 이슈가 없습니다.</p>
+            )}
           </Card>
         </div>
       </div>

@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { Card, Button, Input } from '@/components/ui';
-import { Candidate } from '@/types';
+import type { RoutingCandidate, VirtualMeetingRequest } from '@/types/api';
+import { ApiClient, SseClient } from '@/services/apiClient';
 import { Send, Bot, ShieldAlert, Gavel } from 'lucide-react';
 
 interface MeetingPanelProps {
-  participants: Candidate[];
+  participants: RoutingCandidate[];
+  runId?: string;
+  issueId?: string;
   onComplete: () => void;
 }
 
@@ -17,11 +20,15 @@ type Message = {
   timestamp: Date;
 };
 
-export function MeetingPanel({ participants, onComplete }: MeetingPanelProps) {
+export function MeetingPanel({ participants, runId, issueId, onComplete }: MeetingPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const utteranceQueueRef = useRef<Array<{ name: string; role?: string; text: string }>>([]);
+  const queueTimerRef = useRef<number | null>(null);
+  const queueActiveRef = useRef(false);
+  const QUEUE_DELAY_MS = 500;
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -54,26 +61,97 @@ export function MeetingPanel({ participants, onComplete }: MeetingPanelProps) {
   ];
 
   useEffect(() => {
-    // Run the script
-    let timeouts: NodeJS.Timeout[] = [];
-    
-    script.forEach((step) => {
-      const timeout = setTimeout(() => {
-        // Show typing indicator before message if it's an AI
-        if (step.type === 'ai') {
-          setIsTyping(`${step.sender}님이 입력 중...`);
-          setTimeout(() => {
-            setIsTyping(null);
+    if (!runId || participants.length === 0) {
+      // Fallback script for demo mode
+      let timeouts: NodeJS.Timeout[] = [];
+
+      script.forEach((step) => {
+        const timeout = setTimeout(() => {
+          if (step.type === 'ai') {
+            setIsTyping(`${step.sender}님이 입력 중...`);
+            setTimeout(() => {
+              setIsTyping(null);
+              addMessage(step.sender, step.text, step.type as any, step.role);
+            }, 1500);
+          } else {
             addMessage(step.sender, step.text, step.type as any, step.role);
-          }, 1500); // Typing duration
-        } else {
-          addMessage(step.sender, step.text, step.type as any, step.role);
+          }
+        }, step.delay);
+        timeouts.push(timeout);
+      });
+
+      return () => timeouts.forEach(clearTimeout);
+    }
+
+    setMessages([]);
+    addMessage('시스템', `🔎 안건: ${issueId ?? '의사결정 이슈'}`, 'system');
+
+    const payload: VirtualMeetingRequest = {
+      issue_id: issueId ?? runId,
+      participants: participants.map(participant => ({
+        name: participant.name,
+        role: participant.role ?? 'Participant',
+        persona_description: `${participant.role ?? '참여자'} 관점에서 의견을 제시합니다`
+      })),
+      meeting_config: {
+        target_turns: 10,
+        tone: 'balanced',
+        conflict_level: 'medium'
+      }
+    };
+
+    const stop = SseClient.generateVirtualMeeting(runId, payload, {
+      onEvent: (eventType, data) => {
+        console.log('[Meeting SSE]', eventType, data);
+        if (eventType === 'utterance') {
+          utteranceQueueRef.current.push({
+            name: data.speaker_name,
+            role: data.speaker_role,
+            text: data.text
+          });
+          if (!queueActiveRef.current) {
+            queueActiveRef.current = true;
+            setIsTyping(`${data.speaker_name}님이 입력 중...`);
+            queueTimerRef.current = window.setInterval(() => {
+              const next = utteranceQueueRef.current.shift();
+              if (!next) {
+                if (queueTimerRef.current) {
+                  window.clearInterval(queueTimerRef.current);
+                  queueTimerRef.current = null;
+                }
+                queueActiveRef.current = false;
+                setIsTyping(null);
+                return;
+              }
+              setIsTyping(`${next.name}님이 입력 중...`);
+              addMessage(next.name, next.text, 'ai', next.role);
+            }, QUEUE_DELAY_MS);
+          }
         }
-      }, step.delay);
-      timeouts.push(timeout);
+        if (eventType === 'complete') {
+          addMessage('시스템', `✅ 회의 요약: ${data.summary}`, 'system');
+          setTimeout(onComplete, 3000);
+        }
+        if (eventType === 'error') {
+          addMessage('시스템', `⚠️ ${data.message ?? '회의 스트림 오류'}`, 'system');
+        }
+      },
+      onError: (error) => {
+        addMessage('시스템', `⚠️ ${error.message}`, 'system');
+      }
     });
 
-    return () => timeouts.forEach(clearTimeout);
+    return () => stop();
+  }, [runId, issueId, participants]);
+  
+  useEffect(() => {
+    return () => {
+      if (queueTimerRef.current) {
+        window.clearInterval(queueTimerRef.current);
+      }
+      utteranceQueueRef.current = [];
+      queueActiveRef.current = false;
+    };
   }, []);
 
   const addMessage = (sender: string, text: string, type: 'ai'|'user'|'system', role?: string) => {
@@ -91,6 +169,21 @@ export function MeetingPanel({ participants, onComplete }: MeetingPanelProps) {
     if (!input.trim()) return;
     addMessage('Grace Han', input, 'user', 'VP, Product');
     setInput('');
+
+    if (runId) {
+      const turn = messages.length + 1;
+      ApiClient.submitMeeting(runId, {
+        utterances: [
+          {
+            turn,
+            speaker_role: 'REQUESTER',
+            text: input,
+            speaker_name: 'Grace Han'
+          }
+        ],
+        replace_existing: false
+      }).catch(() => {});
+    }
     
     // Simple echo/ack from random participant if script is done
     setTimeout(() => {

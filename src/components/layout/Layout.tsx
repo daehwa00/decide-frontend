@@ -1,15 +1,37 @@
+import { useEffect, useState } from 'react';
 import { User } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { Badge } from '@/components/ui';
+import { ApiClient } from '@/services/apiClient';
 
 export function Header() {
-  const user = {
+  const [user, setUser] = useState({
     name: 'Grace Han',
     role: 'VP, Product',
     org: 'Product Strategy',
     status: '가능',
     owner: true
-  };
+  });
+
+  useEffect(() => {
+    let mounted = true;
+    ApiClient.getCurrentUser()
+      .then(data => {
+        if (!mounted) return;
+        setUser(prev => ({
+          ...prev,
+          name: data.name ?? prev.name,
+          role: data.role ?? prev.role,
+          org: data.team || data.department || prev.org
+        }));
+      })
+      .catch(() => {
+        // fallback to demo user
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
