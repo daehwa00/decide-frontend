@@ -97,6 +97,10 @@ export default function LandingPage() {
     return `${minutes}m`;
   };
 
+  const deriveSla = (ageLabel: string): '위험' | '정상' => {
+    return ageLabel.includes('d') ? '위험' : '정상';
+  };
+
   const mapUrgency = (value?: string | null): '높음' | '중간' | '낮음' => {
     if (!value) return '낮음';
     const upper = value.toUpperCase();
@@ -148,6 +152,7 @@ export default function LandingPage() {
         const mapped = data.map(issue => {
           const runId = issueRunMap[issue.id];
           const placeholderDecision = runId ? '분석 대기' : '미배정';
+          const age = formatAge(issue.created_at);
           return {
             id: issue.id,
             title: issue.title ?? issue.text ?? '제목 없음',
@@ -155,8 +160,8 @@ export default function LandingPage() {
             urgency: mapUrgency(issue.urgency),
             status: mapStatusLabel(issue.status),
             owner: issue.submitter_id ? `제출자 ${issue.submitter_id}` : '미지정',
-            age: formatAge(issue.created_at),
-            sla: formatAge(issue.created_at).includes('d') ? '위험' : '정상',
+            age,
+            sla: deriveSla(age),
             decisionSet: [placeholderDecision],
             decisionContext: {
               [placeholderDecision]: runId ? '라우팅 분석 필요' : 'Run ID 없음'
