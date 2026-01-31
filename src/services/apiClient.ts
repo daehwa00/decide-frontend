@@ -5,6 +5,7 @@ import type {
   ApiGraphNode,
   ApiGraphEdge,
   ApiPersonResponse,
+  AuditLogResponse,
   MeetingInput,
   VirtualMeetingRequest
 } from '@/types/api';
@@ -71,7 +72,7 @@ export const ApiClient = {
   getIssue: (issueId: string) => apiFetch<ApiIssueResponse>(`/api/issues/${issueId}`),
   getCurrentUser: () => apiFetch<ApiPersonResponse>('/api/persons/me'),
   getDecisionCard: (cardId: string) => apiFetch(`/api/decisions/${cardId}`),
-  getRunTimeline: (runId: string) => apiFetch(`/api/audit/runs/${runId}/timeline`),
+  getRunTimeline: (runId: string) => apiFetch<AuditLogResponse[]>(`/api/audit/runs/${runId}/timeline`),
   submitMeeting: (runId: string, payload: MeetingInput) =>
     apiFetch(`/api/meetings/${runId}`, {
       method: 'POST',

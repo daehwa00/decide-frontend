@@ -97,7 +97,7 @@ export default function LandingPage() {
     return `${minutes}m`;
   };
 
-  const mapUrgency = (value?: string | null) => {
+  const mapUrgency = (value?: string | null): '높음' | '중간' | '낮음' => {
     if (!value) return '낮음';
     const upper = value.toUpperCase();
     if (upper.includes('HIGH')) return '높음';
